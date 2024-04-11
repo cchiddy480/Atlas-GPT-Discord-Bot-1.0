@@ -1,0 +1,221 @@
+import os
+import discord
+import openai
+from discord.ext import commands
+from dotenv import load_dotenv
+from personas import personas
+
+# Load environment variables from .env file
+load_dotenv()
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
+GPT4_API_KEY = os.getenv('GPT4_API_KEY')
+
+# Initialize the bot & remove default help command
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix=".", intents=intents)
+bot.remove_command("help")
+
+# Initialize the GPT-4 API client
+openai.api_key = GPT4_API_KEY
+
+# Create dictionaries to store the chat history and user states
+user_history = {}
+user_state = {}
+user_persona = {}
+
+# Event: When the bot is ready
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+
+# Command: .atlas
+@bot.command(name="atlas")
+async def toggle_atlas(ctx, persona: str = None):
+    user_id = ctx.author.id
+
+    if user_id not in user_state:
+        user_state[user_id] = True
+
+        if persona and persona in personas:
+            persona_description = personas[persona]
+            user_persona[user_id] = persona_description
+
+            # Create the messages list for GPT-4
+            messages = [{"role": "system", "content": f"Set persona to: {persona_description}"}]
+
+            # Generate the response from GPT-4 using the messages property
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.8,
+                timeout=60
+            )
+
+            welcome_message = response['choices'][0]['message']['content'].strip()
+
+            user_history[user_id] = [
+                {
+                    "role": "system",
+                    "content": welcome_message
+                }
+            ]
+        else:
+            user_history[user_id] = [
+                {
+                    "role": "system",
+                    "content": "Hi there! I'm Atlas-GPT, and I'm ready to chat with you. Ask me anything or tell me what you'd like to talk about."
+                }
+            ]
+    else:
+        user_state[user_id] = not user_state[user_id]
+
+        if user_state[user_id] and persona and persona in personas:
+            persona_description = personas[persona]
+            user_persona[user_id] = persona_description
+
+            # Create the messages list for GPT-4
+            messages = [{"role": "system", "content": f"Set persona to: {persona_description}"}]
+
+            # Generate the response from GPT-4 using the messages property
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                max_tokens=1000,
+                n=1,
+                stop=None,
+                temperature=0.8,
+                timeout=60
+            )
+
+            welcome_message = response['choices'][0]['message']['content'].strip()
+
+            user_history[user_id][0]["content"] = welcome_message
+
+    state = "active" if user_state[user_id] else "inactive"
+    await ctx.send(f"Atlas-GPT is now {state} for this user.")
+
+    # Send the welcome message if Atlas is active
+    if user_state[user_id]:
+        await ctx.send(user_history[user_id][0]["content"])
+
+
+# Command: .help
+@bot.command(name="help")
+async def atlas_help(ctx):
+    embed = discord.Embed(
+        title="Atlas-GPT Help",
+        description="Here's a list of commands and their usage:",
+        color=discord.Color.blue(),
+    )
+
+    embed.add_field(
+        name=".atlas ",
+        value="Toggles Atlas on and off",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Example usage:",
+        value="`.atlas`\n`.atlas How to I make cheese?`",
+        inline=False,
+    )
+
+    embed.add_field(
+        name=".atlas [persona]",
+        value="Toggles Atlas-GPT on or off. Optionally, specify a persona to use during the conversation.",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Example usage:",
+        value="`.atlas`\n`.atlas scientist`",
+        inline=False,
+    )
+
+    embed.set_footer(text="If you have any questions or need assistance, feel free to ask.")
+    await ctx.send(embed=embed)
+
+# Command: .personas
+@bot.command(name="personas")
+async def atlas_help(ctx):
+    embed = discord.Embed(
+        title="Available Personas",
+        description="Here's a list of personas and their usage:",
+        color=discord.Color.blue(),
+    )
+
+    embed.add_field(
+        name="Accountancy Lecturer",
+        value="Will toggle Atlas into the persona of an Accountancy Lecturer",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Example usage:",
+        value='`.atlas "accountant lecturer"`',
+        inline=False,
+    )
+
+    embed.set_footer(text="If you would like any personas added, feel free to ask.")
+    await ctx.send(embed=embed)
+
+@bot.event
+async def on_message(message):
+    # Process commands first
+    await bot.process_commands(message)
+
+    # Ignore messages sent by the bot itself
+    if message.author == bot.user:
+        return
+
+    # Ignore messages that start with the command prefix
+    if message.content.startswith('.'):
+        return
+
+    # Get the user's ID
+    user_id = message.author.id
+
+    # If the user state is not active, do not process the message
+    if not user_state.get(user_id, False):
+        return
+
+    # If there's no chat history for the user, initialize it
+    if user_id not in user_history:
+        user_history[user_id] = []
+
+    # Add the user's message to the chat history
+    user_history[user_id].append({"role": "user", "content": message.content})
+
+    # Create the messages list for GPT-3
+    messages = user_history[user_id]
+
+    # Add the active persona as a system message if it exists for the user
+    if user_id in user_persona:
+        user_history[user_id].append({"role": "system", "content": f"Set persona to: {user_persona[user_id]}"})
+
+    # Generate the response from GPT-3 using the messages property
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=user_history[user_id],
+        max_tokens=1000,
+        n=1,
+        stop=None,
+        temperature=0.8,
+        timeout=60
+    )
+
+    gpt_response = response['choices'][0]['message']['content'].strip()
+    print(f"Generated response: {gpt_response}")
+
+    # Send the generated response to the Discord channel
+    await message.channel.send(gpt_response)
+
+    # Add the GPT-3 response to the chat history
+    user_history[user_id].append({"role": "assistant", "content": gpt_response})
+
+# Run the bot
+bot.run(DISCORD_TOKEN)
